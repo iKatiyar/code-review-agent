@@ -75,12 +75,12 @@ Submit any public GitHub PR URL → the agent autonomously:
 
 | Feature | Detail |
 |---|---|
-| **Stateful LangGraph Agent** | `triage → analysis_loop → synthesize` with conditional edges and per-file decision logic |
-| **Tool Calling** | `analyze_code_with_ai` tool wraps Claude; `python_tools` provide static analysis via AST |
-| **Structured Output** | `instructor` patches the Anthropic client → Pydantic-validated `AIAnalysisResult` every time |
+| **Stateful LangGraph Agent** | `triage → analysis_loop → synthesize → post_review` with conditional edges and per-file decision logic |
+| **Tool Calling (3 tools)** | `fetch_pr_tool` (PR fetch) · `static_analysis_tool` (AST-based) · `post_review_comment_tool` (comment poster) |
+| **Claude Structured Output** | `instructor` patches the Anthropic client → Pydantic-validated `AIAnalysisResult` on every response |
 | **Async End-to-End** | FastAPI + `asyncio` + Celery workers; non-blocking from HTTP request to DB write |
 | **Full Auditability** | Every task, file result, and summary persisted in PostgreSQL with timestamps and status |
-| **GitHub Integration** | PyGithub with Redis-cached repo objects + graceful rate-limit handling |
+| **GitHub Integration** | PyGithub with Redis-cached repo objects + graceful rate-limit handling + PR comment posting |
 | **Alembic Migrations** | Schema versioned migrations — no `create_all()` in production |
 | **Docker Compose** | One command spins up Postgres + Redis + API + worker |
 
@@ -250,12 +250,12 @@ START
   ▼
 triage_pr_node
   • Reads PR metadata + file list
-  • Selects Python files for deep AI analysis
+  • Selects Python files for deep AI analysis (extensible priority logic)
   │
   ▼
 file_analysis_loop_node  ◄──────────┐
   • Pops one file from critical_files │
-  • Calls analyze_code_with_ai tool   │  (loop while critical_files not empty)
+  • Calls analyze_code_with_ai tool   │  (loops while critical_files not empty)
   • Appends issues to analysis_results│
   │                                   │
   ▼  should_continue_analysis?        │
@@ -269,10 +269,26 @@ synthesize_report_node
   • Writes final_summary to state
   │
   ▼
+post_review_node                         ← comment poster
+  • Calls post_review_comment_tool
+  • Formats Markdown review (severity icons, per-file collapsibles)
+  • Posts via GitHub Reviews API (event=COMMENT)
+  • Skipped gracefully when post_comment=False
+  │
+  ▼
 END
 ```
 
-Each node receives and returns the full `AIAnalysisState` TypedDict — making the workflow inspectable, resumable, and easy to extend with new nodes.
+Each node receives and returns the full `AIAnalysisState` TypedDict — making the workflow inspectable, resumable, and trivial to extend with new nodes.
+
+### Custom Tools
+
+| Tool | File | Role |
+|---|---|---|
+| `fetch_pr_tool` | `github_tools.py` | Fetches PR metadata + changed file list from GitHub API |
+| `static_analysis_tool` | `github_tools.py` | AST-based Python checks (style, bugs, best practices) — no LLM call |
+| `analyze_code_with_ai` | `ai_tools.py` | Calls Claude via `LLMService` for deep semantic analysis |
+| `post_review_comment_tool` | `github_tools.py` | Posts aggregated review as a GitHub PR comment |
 
 ---
 
