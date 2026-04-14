@@ -7,7 +7,10 @@
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.6-1C3C3C?style=flat&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![Claude](https://img.shields.io/badge/Claude-3.5_Sonnet-D97757?style=flat)](https://anthropic.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-13-336791?style=flat&logo=postgresql&logoColor=white)](https://postgresql.org)
+[![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat&logo=redis&logoColor=white)](https://redis.io)
+[![Celery](https://img.shields.io/badge/Celery-37814A?style=flat&logo=celery&logoColor=white)](https://docs.celeryq.dev)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker&logoColor=white)](https://docker.com)
+[![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat&logo=amazonaws&logoColor=white)](https://aws.amazon.com)
 
 ---
 
@@ -24,48 +27,61 @@ Submit any public GitHub PR URL → the agent autonomously:
 
 ---
 
+## ✨ What Makes This Impressive
+
+| | Detail |
+|---|---|
+| **Stateful agent, not a chain** | LangGraph `StateGraph` with conditional edges — the agent decides per-file whether to continue analysis or terminate, not a fixed pipeline |
+| **Structured AI output** | `instructor` patches the Anthropic client to return Pydantic-validated `AIAnalysisResult` on every call — zero unstructured LLM text in the data layer |
+| **True async end-to-end** | HTTP request returns in milliseconds with a `task_id`; Celery worker runs the full workflow in the background; results polled separately |
+| **Production-grade persistence** | Every task, file result, and summary written to PostgreSQL with Alembic-versioned schema migrations — no `create_all()` shortcuts |
+| **Resilient GitHub integration** | PyGithub with Redis-cached repo objects, graceful rate-limit handling, and PR comment posting via GitHub Reviews API |
+| **One-command deploy** | Docker Compose brings up Postgres + Redis + FastAPI + Celery worker — identical local and production environments |
+
+---
+
 ## 🏗️ Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        REST Client                           │
-│              POST /api/v1/analyze-pr  →  task_id            │
+│              POST /api/v1/analyze-pr  →  task_id             │
 └───────────────────────┬──────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                    FastAPI  (port 8000)                      │
-│   • Validates request  •  Creates DB task  •  Enqueues job  │
+│   • Validates request  •  Creates DB task  •  Enqueues job   │
 └───────────────────────┬──────────────────────────────────────┘
                         │  Redis (Celery broker)
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                   Celery Worker                              │
 │                                                              │
-│  1. GitHubService  ──► fetch PR + file contents             │
+│  1. GitHubService  ──► fetch PR + file contents              │
 │  2. LangGraphAnalyzer ──► run AI workflow                    │
-│  3. Persist results  ──► PostgreSQL                         │
+│  3. Persist results  ──► PostgreSQL                          │
 └───────────────────────┬──────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │               LangGraph Stateful Workflow                    │
 │                                                              │
-│  ┌─────────────┐   ┌──────────────────┐   ┌─────────────┐  │
-│  │  triage_pr  │──►│ file_analysis    │──►│  synthesize │  │
-│  │             │   │ _loop  (per file)│   │  _report    │  │
-│  └─────────────┘   └──────────────────┘   └─────────────┘  │
-│         │                   │                     │         │
-│         ▼                   ▼                     ▼         │
-│   Identify           analyze_code_with_ai    Summary +      │
-│   critical files     (Claude 3.5 Sonnet)     severity       │
+│  ┌─────────────┐   ┌──────────────────┐   ┌─────────────┐    │
+│  │  triage_pr  │──►│ file_analysis    │──►│  synthesize │    │
+│  │             │   │ _loop  (per file)│   │  _report    │    │
+│  └─────────────┘   └──────────────────┘   └─────────────┘    │
+│         │                   │                     │          │
+│         ▼                   ▼                     ▼          │
+│   Identify           analyze_code_with_ai    Summary +       │
+│   critical files     (Claude 3.5 Sonnet)     severity        │
 │                      via instructor          breakdown       │
 └──────────────────────────────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                      PostgreSQL                              │
-│   analysis_tasks  •  analysis_results  •  analysis_summaries│
+│   analysis_tasks  •  analysis_results  •  analysis_summaries │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -372,8 +388,3 @@ docker build -t code-review-agent .
 
 Docker Compose `web` and `worker` services reference the same image — scale workers independently based on queue depth.
 
----
-
-## 🔧 Tech Stack
-
-`Python 3.12` `FastAPI` `LangGraph` `Claude 3.5 Sonnet` `Anthropic API` `instructor` `Celery` `Redis` `PostgreSQL` `SQLModel` `Alembic` `PyGithub` `Docker` `AWS`
